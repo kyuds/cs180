@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cs 180 project by daniel shin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<main class="stage">
+  <div class="machine">
+    <div class="boxes">
+      <div class="box"><div class="window"><div class="reel"></div></div></div>
+      <div class="box"><div class="window"><div class="reel"></div></div></div>
+      <div class="box"><div class="window"><div class="reel"></div></div></div>
+    </div>
+    <button class="spin" id="spin">Spin!</button>
+  </div>
+</main>
+
+<footer>cs 180 project by daniel shin</footer>
+
+<script>
+// set a project's page here once it's written; null sends you to oops.html
+const PAGES = [null, null, null, null, null, null];
+
+const N = PAGES.length;
+const MAX_LOOPS = 11;          // reel is built long enough for the longest spin
+const DIRS = ["down", "up", "down"];
+
+const reels = [...document.querySelectorAll(".reel")];
+const spin = document.getElementById("spin");
+let landed = 0;
+
+for (const reel of reels) {
+  for (let i = 0; i < MAX_LOOPS * N + N; i++) {
+    const d = document.createElement("div");
+    d.textContent = i % N;
+    reel.appendChild(d);
+  }
+}
+
+// digit height changes at the mobile breakpoint, so read it instead of hardcoding
+const itemHeight = () => reels[0].firstElementChild.offsetHeight;
+
+const place = (reel, px) => {
+  reel.style.transition = "none";
+  reel.style.transform = `translateY(${px}px)`;
+};
+
+addEventListener("resize", () => {
+  for (const reel of reels) place(reel, -landed * itemHeight());
+});
+
+spin.addEventListener("click", () => {
+  const target = Math.floor(Math.random() * N);
+  const item = itemHeight();
+  spin.disabled = true;
+  landed = target;
+  let slowest = 0;
+
+  reels.forEach((reel, i) => {
+    const loops = 6 + Math.floor(Math.random() * 5);
+    const secs = 2.2 + Math.random();
+    const near = -target * item;
+    const far = -(loops * N + target) * item;
+    const up = DIRS[i] === "up";
+    slowest = Math.max(slowest, secs);
+
+    place(reel, up ? near : far);
+    reel.offsetHeight; // flush the jump so it isn't animated
+    reel.style.transition = `transform ${secs}s cubic-bezier(0.12, 0.9, 0.2, 1)`;
+    reel.style.transform = `translateY(${up ? far : near}px)`;
+  });
+
+  // transitionend is unreliable on clipped/backgrounded elements, and we set the
+  // durations ourselves, so just wait out the slowest reel
+  setTimeout(() => {
+    location.href = PAGES[target] || `oops.html?p=${target}`;
+  }, slowest * 1000 + 500);
+});
+</script>
+
+</body>
+</html>

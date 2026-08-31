@@ -1,0 +1,14 @@
+.DS_Store
+.vscode/
+.idea/
+
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# raw source plates (Prokudin-Gorskii .tif files are ~70MB each);
+# GitHub Pages soft-caps the repo at 1GB, so commit exported .jpg/.png only
+*.tif
+*.tiff

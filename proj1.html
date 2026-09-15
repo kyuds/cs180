@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>project 1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="doc">
+
+<header class="bar">
+  <span>cs 180</span>
+  <span>project 1</span>
+</header>
+
+<h1 class="doc-title">images of the<br>russian empire</h1>
+<p class="doc-meta">colorizing the prokudin-gorskii photo collection &middot; fall 2026</p>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">01</span><h2>so what are the glass plates?</h2></div>
+  <div class="side">
+    <div>
+      <p class="writeup">Between 1907 and 1915 Sergei Mikhailovich Prokudin-Gorskii photographed the Russian Empire in color. The problem? Color films didn't exist. His trick was to expose the same scene three times onto one glass plate, once each through a blue, a green and a red filter. To view the color image, one would project the three frames through matching filters onto a screen. The Library of Congress bought the plates in 1948 and scanned them. Each scan is a single tall grayscale image with the three exposures stacked top to bottom in the order blue, green, red.</p>
+      <p class="writeup">Because technology isn't perfect, the camera actually drifts while the three exposures were being taken. Therefore, aligning the scans onto one projection was no simple task. However, through the power of CS180 and mathematics, it is possible to develop computer programs to help us find the correct alignment.</p>
+      <p class="writeup">Now, before we get into the details, we will settle on some conventions and details. Except for the bells and whistles (bonus) part, everything is written in NumPy. We use the blue frame (first frame) as the fixed reference, and we denote the green and red frame shifts as <strong>(x, y)</strong>: the number of pixels the frame was shifted right and down to land on the reference.</p>
+    </div>
+    <figure>
+      <img src="media/p1/cathedral_plate.jpg" alt="Scanned glass plate with the blue, green and red exposures stacked vertically">
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">02</span><h2>single-scale alignment</h2></div>
+  <p class="sub">approach</p>
+  <p class="writeup">After the plate is read, we convert it to floating point in the range [0, 1] (so the scan results are in the same scale regardless of JPEG or TIFF) and cut it into three equal-height frames. When aligning, we only try to align based on the central 80% of each frame and trim off 10% every side. This is because the scan has borders which are 1) irrelevant and 2) high contrast. In the pseudocode, trimming is denoted as INTERIOR. We cover why this matters more in section 03.</p>
+  <p class="writeup">The two cropped frames are then scored with one of two metrics, written in NumPy:</p>
+  <table class="codepair"><tr>
+    <td><div class="code">def l2(a, b):
+    return -np.sum((a - b) ** 2)</div></td>
+    <td><div class="code">def ncc(a, b):
+    a = a - a.mean()
+    b = b - b.mean()
+    return np.sum(a * b) / np.sqrt(np.sum(a * a) * np.sum(b * b))</div></td>
+  </tr></table>
+  <p class="writeup">Both return a score where <em>greater the better</em>, which is why we have the minus sign for L2. L2 is the Euclidean distance between the two frames viewed as vectors, and greater the L2 value, the "more distance" the vectors are. We simplify the L2 in two ways. First, we drop the square root as L2 is monotonic anyways, and second, negate the sum, which turns &ldquo;smallest distance&rdquo; into &ldquo;largest score&rdquo;. NCC is similar: each frame has its mean subtracted and the product is divided by the two norms, so the result is the cosine of the angle between the mean-centered frames, +1 for a perfect match, and unaffected by a frame being brighter or more contrasty overall. As both metrics point the same way, we can now use these metrics to design an alignment function.</p>
+  <p class="writeup">Searching for the right alignment is essentially a double for loop over every shift in a square window around a center, trying to find the best shift. The single-scale alignment is that search with a &plusmn;15 window around zero, 31 &times; 31 = 961 candidates per frame. Inside the code a displacement is (dy, dx), rows then columns. On this page the same numbers are written as (x, y).</p>
+  <div class="code">SEARCH(frame, blue, radius, center)
+    best-score = -infinity
+    for dy = center.y - radius to center.y + radius
+        for dx = center.x - radius to center.x + radius
+            shifted = ROLL(frame, dy, dx)
+            score = METRIC(INTERIOR(shifted), INTERIOR(blue))
+            if score &gt; best-score
+                best-score = score
+                best-offset = (dy, dx)
+    return best-offset
+
+SINGLE-SCALE-ALIGN(frame, blue)
+    return SEARCH(frame, blue, radius = 15, center = (0, 0))</div>
+  <p class="writeup">Finally the two winning displacements are applied and the frames are stacked in RGB order.</p>
+  <p class="writeup">The scores over the whole window form a surface with a single clear peak. For the cathedral, green peaks at (2, 5) and red at (3, 12). The surface is pretty smooth within the window and the peak is likely to fall somewhere in the center of the image, which is why this sort of brute-force approach works. However, this approach will not work for much larger images where the "center" is also larger.</p>
+  <div class="wide">
+    <figure>
+      <img src="media/p1/ncc_surface_cathedral.png" alt="NCC score over all 961 candidate displacements for the cathedral, green and red channels">
+      <figcaption>ncc score over the 31 &times; 31 search window, cathedral &middot; the cross marks the maximum</figcaption>
+    </figure>
+  </div>
+
+  <p class="sub">results on the low-resolution plates</p>
+  <p class="writeup">Left is the naive stack, right is the aligned result. L2 and NCC chose the same shifts on all three, so we only show one output per plate.</p>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/cathedral_unaligned.jpg" alt="Cathedral, no alignment">
+      <figcaption>cathedral &middot; unaligned</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/cathedral_single.jpg" alt="Cathedral, single-scale alignment">
+      <figcaption>cathedral &middot; g (2, 5) &middot; r (3, 12)</figcaption>
+    </figure>
+  </div>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/monastery_unaligned.jpg" alt="Monastery, no alignment">
+      <figcaption>monastery &middot; unaligned</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/monastery_single.jpg" alt="Monastery, single-scale alignment">
+      <figcaption>monastery &middot; g (2, &minus;3) &middot; r (2, 3)</figcaption>
+    </figure>
+  </div>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/tobolsk_unaligned.jpg" alt="Tobolsk, no alignment">
+      <figcaption>tobolsk &middot; unaligned</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/tobolsk_single.jpg" alt="Tobolsk, single-scale alignment">
+      <figcaption>tobolsk &middot; g (3, 3) &middot; r (3, 6)</figcaption>
+    </figure>
+  </div>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>plate</th><th>l2 &middot; green</th><th>l2 &middot; red</th><th>ncc &middot; green</th><th>ncc &middot; red</th></tr>
+      <tr><td>cathedral</td><td>(2, 5)</td><td>(3, 12)</td><td>(2, 5)</td><td>(3, 12)</td></tr>
+      <tr><td>monastery</td><td>(2, &minus;3)</td><td>(2, 3)</td><td>(2, &minus;3)</td><td>(2, 3)</td></tr>
+      <tr><td>tobolsk</td><td>(3, 3)</td><td>(3, 6)</td><td>(3, 3)</td><td>(3, 6)</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">03</span><h2>why only consider the interior</h2></div>
+  <p class="writeup">A natural question that arose was why 10% margin? Initially, 10% margin was chosen as a magic number. We did a rough estimate on how big the margins were on average and settled on 10%. However, it would be nice to know if this trimming is actually meaningful. We re-ran the raw-pixel NCC alignment on all fourteen course plates with the scoring margin set to 0%, 5% and the 10% (default). With no margin at all, only three of the fourteen results land within two pixels of the 10% answer. Five of the plates produce terrible results. Even the little cathedral goes wrong, to g (&minus;1, 1) and r (&minus;1, 7). 5% margins are much better, but the church&rsquo;s green frame is still 16 pixels off. At 10% the only failure left is the Emir, and that one has nothing to do with borders (section 07).</p>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>scoring margin</th><th>within 2 px of the 10% result</th><th>failures over 10 px</th></tr>
+      <tr><td>0% (no trim)</td><td>3 of 14</td><td>church, emir (both frames), harvesters, ilemselga, self portrait</td></tr>
+      <tr><td>5%</td><td>12 of 14</td><td>church green, 16 px off</td></tr>
+      <tr><td>10%</td><td>&mdash;</td><td>emir red only</td></tr>
+    </table>
+  </div>
+  <p class="writeup">Take the harvesters as an example. The plate has thick white and black bands along the top and left which the search algorithm is eager to line up, dragging the green frame 58 pixels away from where the people actually are.</p>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/harvesters_margin0.jpg" alt="Harvesters aligned with no border margin: severe ghosting">
+      <figcaption>harvesters &middot; scored on the full frame &middot; g (&minus;3, 118)</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/harvesters_ncc.jpg" alt="Harvesters aligned with a 10% margin">
+      <figcaption>harvesters &middot; scored on the interior &middot; g (17, 60)</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">04</span><h2>multi-scale pyramid</h2></div>
+  <p class="sub">approach</p>
+  <p class="writeup">Brute-forcing on full-resolution scans are, well, very time consuming: there are about 3200 &times; 3600 pixels per frame, each 16 bits deep, and the frames can be shifted by over a hundred pixels. A search window wide enough to contain that, say &plusmn;180 pixels, has 361 &times; 361 = 130,321 candidates, and for each candidate, we have to correlate an eleven-megapixel image. This takes way too much time. The fix is to match small-scale versions of the photos and then make small corrections as while zooming back in.</p>
+  <p class="writeup">We can build this scale-in alignment recursively, called the pyramid aligning method. Each frame is halved until the shorter side drops below 300 pixels, which then we run the &plusmn;15 exhaustive search exactly as in section 02. Coming back up, the estimate from the level below is doubled, because every pixel there is two pixels here, and refined with a &plusmn;3 search centered on the doubled guess.</p>
+  <div class="code">PYRAMID-ALIGN(frame, blue)
+    if the shorter side of frame is under 300 px
+        return SEARCH(frame, blue, radius = 15, center = (0, 0))
+    // HALVE blurs a frame, then downsamples it by 2
+    guess = PYRAMID-ALIGN(HALVE(frame), HALVE(blue))
+    return SEARCH(frame, blue, radius = 3, center = 2 &middot; guess)</div>
+  <p class="writeup">For the <strong>church</strong> plate, this is five levels, 3202 &times; 3634 down to 200 &times; 227. Now instead of the ~130,000 comparisons, we only need to make 1157 comparisons. Of the 1157 comparisons, only 49 of them are run on the full frames. We reduce the runtime to about three seconds per plate on a laptop.</p>
+  <div class="wide">
+    <figure>
+      <img src="media/p1/pyramid_levels.jpg" alt="The five pyramid levels of the church plate's blue frame at true relative size">
+      <figcaption>the blue frame of the church at every level of its pyramid, drawn to true relative size</figcaption>
+    </figure>
+  </div>
+  <p class="sub">walking through the church down the pyramid</p>
+  <p class="writeup">The table follows both frames of the church plate from the image above. On the 200 &times; 227 image the red frame is best at (0, 4); doubled that is (0, 8), the &plusmn;3 refinement moves it to (&minus;1, 7), and so on up to (&minus;4, 58) at full resolution.</p>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>level</th><th>size</th><th>green &middot; guess</th><th>green &middot; best</th><th>red &middot; guess</th><th>red &middot; best</th><th>window</th></tr>
+      <tr><td>4, coarsest</td><td>200 &times; 227</td><td>(0, 0)</td><td>(0, 2)</td><td>(0, 0)</td><td>(0, 4)</td><td>&plusmn;15</td></tr>
+      <tr><td>3</td><td>400 &times; 454</td><td>(0, 4)</td><td>(0, 3)</td><td>(0, 8)</td><td>(&minus;1, 7)</td><td>&plusmn;3</td></tr>
+      <tr><td>2</td><td>800 &times; 908</td><td>(0, 6)</td><td>(1, 6)</td><td>(&minus;2, 14)</td><td>(&minus;1, 15)</td><td>&plusmn;3</td></tr>
+      <tr><td>1</td><td>1601 &times; 1817</td><td>(2, 12)</td><td>(2, 12)</td><td>(&minus;2, 30)</td><td>(&minus;2, 29)</td><td>&plusmn;3</td></tr>
+      <tr><td>0, full</td><td>3202 &times; 3634</td><td>(4, 24)</td><td>(4, 25)</td><td>(&minus;4, 58)</td><td>(&minus;4, 58)</td><td>&plusmn;3</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">05</span><h2>pyramid results on all fourteen plates</h2></div>
+  <p class="writeup">Below we show all fourteen course images, aligned with the pyramid and raw-pixel NCC using one set of parameters: 10% scoring margin, &plusmn;15 at the coarsest level, &plusmn;3 refinement, 300-pixel stopping size. Thirteen images are reconstructed well. Reconstructing The Emir fails and we will discuss why in later sections.</p>
+  <div class="trio">
+    <figure><img src="media/p1/cathedral_ncc.jpg" alt="Cathedral"><figcaption>cathedral<br>g (2, 5) &middot; r (3, 12)</figcaption></figure>
+    <figure><img src="media/p1/monastery_ncc.jpg" alt="Monastery"><figcaption>monastery<br>g (2, &minus;3) &middot; r (2, 3)</figcaption></figure>
+    <figure><img src="media/p1/tobolsk_ncc.jpg" alt="Tobolsk"><figcaption>tobolsk<br>g (3, 3) &middot; r (3, 6)</figcaption></figure>
+  </div>
+  <div class="trio">
+    <figure><img src="media/p1/church_ncc.jpg" alt="Church"><figcaption>church<br>g (4, 25) &middot; r (&minus;4, 58)</figcaption></figure>
+    <figure><img src="media/p1/harvesters_ncc.jpg" alt="Harvesters"><figcaption>harvesters<br>g (17, 60) &middot; r (13, 124)</figcaption></figure>
+    <figure><img src="media/p1/icon_ncc.jpg" alt="Icon"><figcaption>icon<br>g (17, 41) &middot; r (23, 89)</figcaption></figure>
+  </div>
+  <div class="trio">
+    <figure><img src="media/p1/ilemselga_ncc.jpg" alt="Ilemselga"><figcaption>ilemselga<br>g (7, 40) &middot; r (11, 130)</figcaption></figure>
+    <figure><img src="media/p1/melons_ncc.jpg" alt="Melons"><figcaption>melons<br>g (11, 82) &middot; r (13, 178)</figcaption></figure>
+    <figure><img src="media/p1/religous_painting_ncc.jpg" alt="Religious painting"><figcaption>religious painting<br>g (3, 28) &middot; r (7, 68)</figcaption></figure>
+  </div>
+  <div class="trio">
+    <figure><img src="media/p1/self_portrait_ncc.jpg" alt="Self portrait"><figcaption>self portrait<br>g (29, 79) &middot; r (37, 176)</figcaption></figure>
+    <figure><img src="media/p1/siren_ncc.jpg" alt="Siren"><figcaption>siren<br>g (&minus;6, 49) &middot; r (&minus;25, 96)</figcaption></figure>
+    <figure><img src="media/p1/three_generations_ncc.jpg" alt="Three generations"><figcaption>three generations<br>g (14, 53) &middot; r (11, 112)</figcaption></figure>
+  </div>
+  <div class="trio">
+    <figure><img src="media/p1/wharf_ncc.jpg" alt="Wharf"><figcaption>wharf<br>g (&minus;7, 15) &middot; r (&minus;16, 83)</figcaption></figure>
+    <figure><img src="media/p1/emir_ncc.jpg" alt="Emir, misaligned red channel"><figcaption>emir<br>g (24, 49) &middot; r (&minus;205, 141)<br>failed, see 07</figcaption></figure>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">06</span><h2>l2 versus ncc</h2></div>
+  <p class="writeup">The L2 and NCC metrics agree for most images, but they seriously disagree for some images where the frames differ in brightness. Let&rsquo;s look at the <strong>church</strong>: NCC puts the red frame at (&minus;4, 58), while L2 computes it at (267, 64), which is very far off. L2 measures absolute intensity differences, and the sky, water and walls of the church have different brightness in the red exposure than in the blue one, so the sum of squared differences is minimized not by matching structure but by finding some overlap of dark against dark and light against light. NCC subtracts the mean and normalizes the contrast of each frame before comparing, which helps remedy that problem. From now on, we will consider NCC the better metric and use it.</p>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/church_l2.jpg" alt="Church aligned with L2, red channel misplaced">
+      <figcaption>church &middot; l2 &middot; r (267, 64)</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/church_ncc.jpg" alt="Church aligned with NCC">
+      <figcaption>church &middot; ncc &middot; r (&minus;4, 58)</figcaption>
+    </figure>
+  </div>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/crop_church_l2.jpg" alt="Full-resolution crop of the church tower, L2">
+      <figcaption>l2 &middot; 600 px crop at 100%</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/crop_church_ncc.jpg" alt="Full-resolution crop of the church tower, NCC">
+      <figcaption>ncc &middot; 600 px crop at 100%</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">07</span><h2>why does emir of bukhara fail?</h2></div>
+  <p class="writeup">With raw pixels and NCC, the Emir&rsquo;s green frame aligns fine at (24, 49), but the red frame ends up at (&minus;205, 141). The culprit is Emir's robe, which is very, very blue. NCC removes differences in overall brightness and contrast, but it still assumes that what is bright in one frame is bright in the other. Emir's robe, being the largest object in the picture, breaks this assumption. His robe is almost white in the blue exposure and nearly black in the red one, so the robe region of the two frames are <em>anti</em>-correlated, causing a bad alignment score for the correct alignment.</p>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/emir_ncc.jpg" alt="Emir aligned with raw-pixel NCC, red channel wrong">
+      <figcaption>emir &middot; raw pixels + ncc &middot; r (&minus;205, 141)</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/crop_emir_ncc.jpg" alt="Full-resolution crop of the Emir's belt, raw-pixel NCC">
+      <figcaption>the belt at 100% &middot; red frame displaced</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">08</span><h2>bells &amp; whistles: aligning on edges</h2></div>
+  <p class="writeup">We showed that the difference in brightness was the culprit for Emir&rsquo;s frames. Fortunately, though, the <em>edges</em> are still similar: the outline of the robe, the pattern on the fabric and the doorway are in the same places in all three exposures regardless of brightness. So instead of correlating pixel values, we can correlate based on edge strength. Each frame is smoothed with a Gaussian (sigma 2) and passed through a Sobel filter, which gives the gradient magnitude at every pixel. We then run the pyramid search runs on the edge maps.</p>
+  <p class="writeup">That fixes the Emir and the rest of the thirteen images are still reconstructed the same, so this is not a one-off fix.</p>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/emir_ncc.jpg" alt="Emir, raw-pixel NCC">
+      <figcaption>before &middot; raw pixels &middot; r (&minus;205, 141)</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/emir_edges.jpg" alt="Emir aligned on edge maps">
+      <figcaption>after &middot; edges &middot; r (40, 107)</figcaption>
+    </figure>
+  </div>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/crop_emir_ncc.jpg" alt="Emir belt crop, raw pixels">
+      <figcaption>before &middot; 100% crop</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/crop_emir_edges.jpg" alt="Emir belt crop, edges">
+      <figcaption>after &middot; 100% crop</figcaption>
+    </figure>
+  </div>
+  <p class="sub">but why blur?</p>
+  <p class="writeup">Initially, we tried to run Sobel on the raw frames, but it looked worse than raw pixels on several plates even though it fixed the Emir. The reason is film grain. At full resolution the scans are noisy, and a gradient filter detects the grains as small edges. Since the grain is different on each frame, so the edge maps are full of random edges that confuses the alignment metrics. A light Gaussian before the Sobel removes the grain but keeps the real edges, removing the drift.</p>
+  <div class="wide">
+    <figure>
+      <img src="media/p1/crop_painting_ncc.jpg" alt="Religious painting crops, raw-pixel NCC">
+      <figcaption>raw pixels + ncc &middot; g (3, 28) &middot; center and frame corner at 100%</figcaption>
+    </figure>
+  </div>
+  <div class="wide">
+    <figure>
+      <img src="media/p1/crop_painting_sobel.jpg" alt="Religious painting crops, unsmoothed Sobel edges">
+      <figcaption>sobel on raw frames &middot; g (7, 30) &middot; note the fringes on the frame</figcaption>
+    </figure>
+  </div>
+  <div class="wide">
+    <figure>
+      <img src="media/p1/crop_painting_smoothed.jpg" alt="Religious painting crops, Sobel on smoothed frames">
+      <figcaption>sobel on smoothed frames &middot; g (2, 29) &middot; fringes gone</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">09</span><h2>three more plates from the collection</h2></div>
+  <p class="writeup">We pulled three more scans from the Library of Congress and ran them through the same pipeline with the same parameters. All three align on the first try to recreate the color images.</p>
+  <div class="trio">
+    <figure><img src="media/p1/nice_hat_ncc.jpg" alt="Isfandiyar, Khan of Khiva"><figcaption><a href="https://www.loc.gov/item/2018681315/">khan of khiva</a><br>g (5, 41) &middot; r (1, 105)</figcaption></figure>
+    <figure><img src="media/p1/jewelry_ncc.jpg" alt="Woman in traditional dress in front of a yurt"><figcaption><a href="https://www.loc.gov/item/2018681253/">woman by a yurt</a><br>g (38, 48) &middot; r (55, 107)</figcaption></figure>
+    <figure><img src="media/p1/irrigation_ncc.jpg" alt="Irrigation canal in the Murgab estate"><figcaption><a href="https://www.loc.gov/item/2018681254/">irrigation canal</a><br>g (24, 28) &middot; r (49, 47)</figcaption></figure>
+  </div>
+  <p class="writeup">Now we can see the real downside of Prokudin-Gorskii&rsquo;s method with the yurt plate. After we recreate the image, the reed wall and carpet resolutions are very crisp. When we zoom in, however, the woman&rsquo;s necklace is less aligned. It&rsquo;s really difficult for people to stay still for long durations of time, so regardless of any alignment technique, it is very hard to capture potentially moving subjects in this way.</p>
+  <div class="pair">
+    <figure>
+      <img src="media/p1/crop_jewelry_static.jpg" alt="Full-resolution crop of the carpet, sharp">
+      <figcaption>the carpet at 100% &middot; sharp</figcaption>
+    </figure>
+    <figure>
+      <img src="media/p1/crop_jewelry_motion.jpg" alt="Full-resolution crop of the necklace showing motion halos">
+      <figcaption>the necklace at 100% &middot; subject moved between exposures</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">10</span><h2>listing out every offset</h2></div>
+  <p class="writeup">Below we show all computed shifts for the green and red frames relative to blue. We highlighted cells where the alignments fail. As discussed in the previous section, NCC is better than L2, so for the three extra scans, we only ran on NCC. Note that alignment for church, as discussed, fails on L2, but still succeeds on NCC. Only Emir fails on both. It is also very interesting that for most images, using edges versus actual image gave us pretty similar results. However, edge-based scoring is especially powerful in the case of Emir.</p>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>plate</th><th>ncc &middot; g</th><th>ncc &middot; r</th><th>l2 &middot; g</th><th>l2 &middot; r</th><th>edges &middot; g</th><th>edges &middot; r</th></tr>
+      <tr><td>cathedral</td><td>(2, 5)</td><td>(3, 12)</td><td>(2, 5)</td><td>(3, 12)</td><td>(2, 5)</td><td>(3, 12)</td></tr>
+      <tr><td>monastery</td><td>(2, &minus;3)</td><td>(2, 3)</td><td>(2, &minus;3)</td><td>(2, 3)</td><td>(2, &minus;3)</td><td>(2, 3)</td></tr>
+      <tr><td>tobolsk</td><td>(3, 3)</td><td>(3, 6)</td><td>(3, 3)</td><td>(3, 6)</td><td>(3, 3)</td><td>(3, 6)</td></tr>
+      <tr><td>church</td><td>(4, 25)</td><td>(&minus;4, 58)</td><td>(4, 25)</td><td class="bad">(267, 64)</td><td>(4, 25)</td><td>(&minus;4, 59)</td></tr>
+      <tr><td>emir</td><td>(24, 49)</td><td class="bad">(&minus;205, 141)</td><td>(24, 49)</td><td class="bad">(57, 103)</td><td>(23, 49)</td><td>(40, 107)</td></tr>
+      <tr><td>harvesters</td><td>(17, 60)</td><td>(13, 124)</td><td>(16, 59)</td><td>(13, 124)</td><td>(17, 60)</td><td>(14, 124)</td></tr>
+      <tr><td>icon</td><td>(17, 41)</td><td>(23, 89)</td><td>(17, 41)</td><td>(23, 90)</td><td>(17, 42)</td><td>(22, 90)</td></tr>
+      <tr><td>ilemselga</td><td>(7, 40)</td><td>(11, 130)</td><td>(7, 39)</td><td>(11, 130)</td><td>(7, 40)</td><td>(11, 131)</td></tr>
+      <tr><td>melons</td><td>(11, 82)</td><td>(13, 178)</td><td>(11, 82)</td><td>(13, 178)</td><td>(10, 81)</td><td>(13, 178)</td></tr>
+      <tr><td>religious painting</td><td>(3, 28)</td><td>(7, 68)</td><td>(3, 28)</td><td>(7, 68)</td><td>(2, 29)</td><td>(7, 68)</td></tr>
+      <tr><td>self portrait</td><td>(29, 79)</td><td>(37, 176)</td><td>(29, 79)</td><td>(37, 176)</td><td>(29, 79)</td><td>(37, 176)</td></tr>
+      <tr><td>siren</td><td>(&minus;6, 49)</td><td>(&minus;25, 96)</td><td>(&minus;6, 49)</td><td>(&minus;25, 96)</td><td>(&minus;6, 49)</td><td>(&minus;25, 96)</td></tr>
+      <tr><td>three generations</td><td>(14, 53)</td><td>(11, 112)</td><td>(14, 53)</td><td>(11, 112)</td><td>(13, 53)</td><td>(9, 111)</td></tr>
+      <tr><td>wharf</td><td>(&minus;7, 15)</td><td>(&minus;16, 83)</td><td>(&minus;7, 15)</td><td>(&minus;16, 83)</td><td>(&minus;7, 15)</td><td>(&minus;17, 83)</td></tr>
+      <tr><td>khan of khiva</td><td>(5, 41)</td><td>(1, 105)</td><td>&mdash;</td><td>&mdash;</td><td>(5, 40)</td><td>(1, 105)</td></tr>
+      <tr><td>woman by a yurt</td><td>(38, 48)</td><td>(55, 107)</td><td>&mdash;</td><td>&mdash;</td><td>(38, 47)</td><td>(56, 106)</td></tr>
+      <tr><td>irrigation canal</td><td>(24, 28)</td><td>(49, 47)</td><td>&mdash;</td><td>&mdash;</td><td>(24, 28)</td><td>(48, 46)</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer class="doc-foot">
+  <a href="index.html">&larr; index</a>
+  <span>cs 180 project by daniel shin</span>
+</footer>
+
+</body>
+</html>

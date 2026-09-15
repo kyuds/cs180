@@ -236,3 +236,81 @@ figcaption {
 
 footer a { color: #000; text-decoration: none; }
 footer a:hover { text-decoration: underline; }
+
+/* ---- project 1 ---- */
+
+.doc-meta a { color: #000; }
+
+.sub {
+  margin-top: 2.75rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.sec-head + .writeup, .sub + .writeup, .writeup + .writeup,
+.code + .writeup, .tbl-wrap + .writeup { margin-top: 1.25rem; }
+.writeup a { color: #000; }
+.writeup ul { margin-top: 0.5rem; padding-left: 1.4rem; }
+
+.trio {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+  margin: 2.25rem 0 2.5rem;
+}
+.wide { margin: 2.25rem 0 2.5rem; }
+
+.code {
+  margin: 1.75rem 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid #000;
+  font-size: 0.74rem;
+  line-height: 1.75;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.tbl-wrap { margin: 1.75rem 0 2.5rem; overflow-x: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 0.74rem; }
+.tbl th, .tbl td {
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid #000;
+  text-align: left;
+  white-space: nowrap;
+}
+.tbl th {
+  border-bottom: 2px solid #000;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.tbl td.bad { background: #000; color: #fff; }
+
+@media (max-width: 700px) {
+  .trio { grid-template-columns: 1fr; }
+}
+.plate { max-width: 200px; margin: 2.25rem 0 2.5rem; }
+
+.side {
+  display: grid;
+  grid-template-columns: 1fr 350px;
+  gap: 2.5rem;
+  align-items: start;
+  margin-top: 1.5rem;
+}
+.side figcaption { white-space: nowrap; }
+
+.codepair { width: 100%; margin: 1.75rem 0; border-collapse: collapse; }
+.codepair td { width: 50%; border: 1px solid #000; vertical-align: top; }
+.codepair .code { margin: 0; border: 0; }
+
+@media (max-width: 700px) {
+  .side { grid-template-columns: 1fr; }
+  .codepair, .codepair tr, .codepair td { display: block; width: 100%; }
+  .codepair td + td { border-top: 0; }
+}
+
+figcaption a { color: #000; }

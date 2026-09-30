@@ -314,3 +314,32 @@ footer a:hover { text-decoration: underline; }
 }
 
 figcaption a { color: #000; }
+
+/* ---- project 2 ---- */
+
+.quad {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.25rem;
+  margin: 2.25rem 0 2.5rem;
+}
+.writeup code { font-family: inherit; font-size: inherit; }
+.note { margin-top: 1rem; font-size: 0.74rem; color: #777; }
+.lc { text-transform: none; }  /* keep greek letters lowercase in all-caps captions */
+
+/* filter equations (kernel * kernel = kernel), each kernel drawn at its own size */
+.kernel-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem 3.5rem;
+  margin: 2.25rem 0;
+}
+.kernel-eq { display: flex; align-items: center; gap: 1rem; }
+.kernel-eq figure { width: min-content; min-width: 4.5rem; }
+.kernel-eq figure img { width: auto; }
+.kernel-eq .op { padding-bottom: 1.6rem; font-size: 1.3rem; }
+
+@media (max-width: 700px) {
+  .quad { grid-template-columns: 1fr 1fr; }
+  .codepair tbody { display: block; }
+}

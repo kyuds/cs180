@@ -373,6 +373,8 @@ figcaption a { color: #000; }
 .px img { image-rendering: pixelated; }
 
 @media (max-width: 700px) {
-  .five { grid-template-columns: 1fr 1fr; }
   .side figcaption { white-space: normal; }  /* long captions overflow a phone screen */
+}
+@media (max-width: 560px) {
+  .five { grid-template-columns: repeat(3, 1fr); }
 }

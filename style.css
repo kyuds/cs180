@@ -378,3 +378,7 @@ figcaption a { color: #000; }
 @media (max-width: 560px) {
   .five { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* ---- project 4 ---- */
+
+.tbl td.mat { white-space: pre; line-height: 1.6; }

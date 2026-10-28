@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>project 4</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="doc">
+
+<header class="bar">
+  <span>cs 180</span>
+  <span>project 4</span>
+</header>
+
+<h1 class="doc-title">image warping<br>and mosaicing</h1>
+<p class="doc-meta">homographies from clicked points, inverse warping, and three panoramas &middot; fall 2026</p>
+
+<!-- ============================================================ -->
+<h2 class="part">part a &middot; image warping and mosaicing</h2>
+
+<section>
+  <div class="sec-head"><span class="num">A.1</span><h2>shooting the pictures</h2></div>
+  <p class="writeup">Two photos are related by a homography when they share a center of projection, so for each set we stood in one spot and turned the phone in place, taking four portrait shots from left to right with a lot of overlap between neighbors. Everything was shot on the iPhone 14 Pro&rsquo;s main camera (24 mm equivalent). The photos were downscaled to 1200 px on the long side when loaded.</p>
+  <div class="wide">
+    <figure><img src="media/p4/a_sources.jpg" alt="Four overlapping photos of a hallway with a white pillar and a wood-slat wall"><figcaption>set a &middot; gateway interior &middot; a hallway with a slatted wood wall</figcaption></figure>
+  </div>
+  <div class="wide">
+    <figure><img src="media/p4/b_sources.jpg" alt="Four overlapping photos of a curved glass building and a red-roofed building"><figcaption>set b &middot; gateway building &middot; looking out over a courtyard</figcaption></figure>
+  </div>
+  <div class="wide">
+    <figure><img src="media/p4/c_sources.jpg" alt="Four overlapping photos of a classroom with desks, chairs, windows and a TV"><figcaption>set c &middot; gateway study room</figcaption></figure>
+  </div>
+  <p class="writeup">Due to perception and depth, anything closer to the camera will move more as the camera is turned. Therefore, the movement of the backpack in the gateway study room is much more than, say, the TV at the back.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">A.2</span><h2>recovering homographies</h2></div>
+  <p class="writeup">A homography H maps a point (x, y) in one image to (x&prime;, y&prime;) in another, up to a scale w. It has nine entries but only eight degrees of freedom, so we fix the bottom-right one to 1:</p>
+  <div class="code">[w&middot;x&prime;]   [h1 h2 h3] [x]
+[w&middot;y&prime;] = [h4 h5 h6] [y]
+[ w  ]   [h7 h8  1] [1]</div>
+  <p class="writeup">Substituting w = h7&middot;x + h8&middot;y + 1 and moving everything to one side gives two equations that are <em>linear</em> in the eight unknowns, one for x&prime; and one for y&prime;:</p>
+  <div class="code">[x  y  1  0  0  0  &minus;x&prime;x  &minus;x&prime;y] h = x&prime;
+[0  0  0  x  y  1  &minus;y&prime;x  &minus;y&prime;y] h = y&prime;</div>
+  <p class="writeup">Every correspondence adds these two rows, so n points give a 2n &times; 8 system Ah = b. Four points pin H down exactly, but then a couple of pixels of clicking error throw the whole thing off, so we clicked excessively and solved the overdetermined system with least squares.</p>
+  <div class="code">def linear_system(im1_pts, im2_pts):
+    A = []
+    b = []
+    for (x, y), (x_target, y_target) in zip(im1_pts, im2_pts):
+        A.append([x, y, 1, 0, 0, 0, -x_target * x, -x_target * y])
+        A.append([0, 0, 0, x, y, 1, -y_target * x, -y_target * y])
+        b.append(x_target)
+        b.append(y_target)
+    return np.array(A), np.array(b)
+
+
+def computeH(im1_pts, im2_pts):
+    A, b = linear_system(im1_pts, im2_pts)
+    h = np.linalg.lstsq(A, b, rcond=None)[0]
+    h = np.append(h, 1)
+    return h.reshape(3, 3)</div>
+
+  <p class="sub">clicking the correspondences</p>
+  <p class="writeup">Here are the points for registering the third hallway photo (left) onto the second (right):</p>
+  <div class="wide">
+    <figure><img src="media/p4/interior_21_pts.jpg" alt="Nine numbered correspondences between the third and second hallway photos"><figcaption>interior &middot; image 3 &rarr; image 2 &middot; 9 points</figcaption></figure>
+  </div>
+  <p class="writeup">The first four rows of A and b for this pair (the first two points), and the H that comes out of the full 18 &times; 8 system:</p>
+  <div class="code">A[:4] = [[  3.22  1131.97  1     0       0       0   -676.21   -237788.69]
+         [  0       0     0     3.22  1131.97   1  -3514.22  -1235777.78]
+         [153.87   318.98  1     0       0       0  -55502.79  -115061.40]
+         [  0       0     0   153.87   318.98   1  -52877.76  -109619.52]]
+b[:4] = [210.07  1091.71  360.72  343.66]
+
+H = [[ 0.6366  -0.0723  250.6526]
+     [-0.1378   0.6869  110.7209]
+     [-0.0003  -0.0002    1.    ]]</div>
+  <p class="writeup">The right-hand columns of A are huge compared to the rest because they multiply pixel coordinates together. Least squares handles this fine at this size, but it&rsquo;s why the last row of H ends up so tiny: h7 and h8 multiply numbers in the hundreds.</p>
+  <p class="writeup">All nine pairs used in the mosaics are below. Each set is registered as a chain of neighbors (image 1 &rarr; 2, 3 &rarr; 2, 4 &rarr; 3), since the outer photos barely overlap the middle one. The error column is how far, on average, H moves each clicked point from to its partner, measured on the 1200 px images.</p>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>mosaic</th><th>pair</th><th>points</th><th>mean error (px)</th><th>H</th></tr>
+      <tr><td>interior</td><td>1 &rarr; 2</td><td>9</td><td>5.71</td><td class="mat">[[ 1.1786  0.0156 -257.5137]
+ [ 0.0774  1.1207  -53.8376]
+ [ 0.0002  0.        1.    ]]</td></tr>
+      <tr><td>interior</td><td>3 &rarr; 2</td><td>9</td><td>2.08</td><td class="mat">[[ 0.6366 -0.0723  250.6526]
+ [-0.1378  0.6869  110.7209]
+ [-0.0003 -0.0002    1.    ]]</td></tr>
+      <tr><td>interior</td><td>4 &rarr; 3</td><td>12</td><td>3.17</td><td class="mat">[[ 0.7954  0.0521  164.1572]
+ [-0.1814  0.9758   47.6165]
+ [-0.0003  0.0001    1.    ]]</td></tr>
+      <tr><td>building</td><td>1 &rarr; 2</td><td>20</td><td>4.29</td><td class="mat">[[ 1.2176  0.0023 -224.1586]
+ [ 0.1418  1.1054  -72.1378]
+ [ 0.0002 -0.        1.    ]]</td></tr>
+      <tr><td>building</td><td>3 &rarr; 2</td><td>29</td><td>3.98</td><td class="mat">[[ 0.7716 -0.008   216.4502]
+ [-0.1352  0.9201   48.0034]
+ [-0.0003  0.        1.    ]]</td></tr>
+      <tr><td>building</td><td>4 &rarr; 3</td><td>22</td><td>3.69</td><td class="mat">[[ 0.8101 -0.0287  187.8521]
+ [-0.0936  0.8883   56.4804]
+ [-0.0002 -0.        1.    ]]</td></tr>
+      <tr><td>classroom</td><td>1 &rarr; 2</td><td>18</td><td>3.76</td><td class="mat">[[ 1.1043  0.0103 -113.7258]
+ [ 0.0586  1.0585  -27.0527]
+ [ 0.0001 -0.        1.    ]]</td></tr>
+      <tr><td>classroom</td><td>3 &rarr; 2</td><td>12</td><td>3.23</td><td class="mat">[[ 0.757  -0.0276  205.2188]
+ [-0.1552  0.8499   85.0516]
+ [-0.0002 -0.        1.    ]]</td></tr>
+      <tr><td>classroom</td><td>4 &rarr; 3</td><td>16</td><td>2.69</td><td class="mat">[[ 0.8147 -0.0132  177.8877]
+ [-0.122   0.921    41.8544]
+ [-0.0002 -0.        1.    ]]</td></tr>
+    </table>
+  </div>
+  <div class="stack">
+    <figure><img src="media/p4/interior_01_pts.jpg" alt="Correspondences between hallway photos 1 and 2"><figcaption>interior &middot; 1 &rarr; 2</figcaption></figure>
+    <figure><img src="media/p4/interior_32_pts.jpg" alt="Correspondences between hallway photos 4 and 3"><figcaption>interior &middot; 4 &rarr; 3</figcaption></figure>
+    <figure><img src="media/p4/building_01_pts.jpg" alt="Correspondences between building photos 1 and 2"><figcaption>building &middot; 1 &rarr; 2</figcaption></figure>
+    <figure><img src="media/p4/building_21_pts.jpg" alt="Correspondences between building photos 3 and 2"><figcaption>building &middot; 3 &rarr; 2</figcaption></figure>
+    <figure><img src="media/p4/building_32_pts.jpg" alt="Correspondences between building photos 4 and 3"><figcaption>building &middot; 4 &rarr; 3</figcaption></figure>
+    <figure><img src="media/p4/classroom_01_pts.jpg" alt="Correspondences between classroom photos 1 and 2"><figcaption>classroom &middot; 1 &rarr; 2</figcaption></figure>
+    <figure><img src="media/p4/classroom_21_pts.jpg" alt="Correspondences between classroom photos 3 and 2"><figcaption>classroom &middot; 3 &rarr; 2</figcaption></figure>
+    <figure><img src="media/p4/classroom_32_pts.jpg" alt="Correspondences between classroom photos 4 and 3"><figcaption>classroom &middot; 4 &rarr; 3</figcaption></figure>
+  </div>
+  <p class="writeup">The matrices make sense when read side by side. Image 1 sits to the left of image 2, so its H shifts things left (h3 &asymp; &minus;114 to &minus;258) and slightly enlarges them, while images 3 and 4 are shifted right and shrunk. The nonzero h7 and h8 indicates that we are performing a warp rather than an affine one: basically, rotating the camera.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">A.3</span><h2>warping the images</h2></div>
+  <p class="writeup">Both warps use <em>inverse</em> warping. Pushing every input pixel through H would leave holes wherever the image gets stretched, so instead we go the other way: for every pixel in the output, H<sup>&minus;1</sup> tells us where it came from in the input, and we sample the input there. The output size comes from sending the four corners of the input through H and taking their bounding box.</p>
+  <p class="writeup">Pixel (0, 0) is the <em>center</em> of the first pixel, so a source location is valid when it lies in [0, w &minus; 1] &times; [0, h &minus; 1]. Anything outside that gets alpha 0, which is kept as a fourth channel. That way &ldquo;nothing here&rdquo; never gets confused with a black pixel, and it&rsquo;s exactly the mask the mosaic step needs later.</p>
+  <div class="code">def warp(image, homography, sample, top_left, bottom_right):
+    output_xs = np.arange(top_left[0], bottom_right[0] + 1)
+    output_ys = np.arange(top_left[1], bottom_right[1] + 1)
+    grid_x, grid_y = np.meshgrid(output_xs, output_ys)
+    output_points = np.stack([grid_x.ravel(), grid_y.ravel()], axis=1)
+
+    source_points = apply_homography(np.linalg.inv(homography), output_points)
+    ...
+    inside = (source_x >= 0) &amp; (source_x &lt;= width - 1) &amp; (source_y >= 0) &amp; (source_y &lt;= height - 1)
+    colors = sample(image, np.clip(source_x, 0, width - 1), np.clip(source_y, 0, height - 1))</div>
+  <p class="writeup">The two interpolation methods only differ in <code>sample</code>:</p>
+  <div class="writeup"><ul>
+    <li><strong>Nearest neighbor</strong> rounds the source location and copies that one pixel.</li>
+    <li><strong>Bilinear</strong> takes the four pixels around the location and blends them: first along x within the top and bottom rows, then along y between the two rows.</li>
+  </ul></div>
+  <div class="code">def sample_bilinear(image, x, y):
+    left = np.minimum(np.floor(x).astype(int), width - 2)
+    top = np.minimum(np.floor(y).astype(int), height - 2)
+    right = left + 1
+    bottom = top + 1
+
+    weight_x = (x - left)[:, None]
+    weight_y = (y - top)[:, None]
+
+    top_row = image[top, left] * (1 - weight_x) + image[top, right] * weight_x
+    bottom_row = image[bottom, left] * (1 - weight_x) + image[bottom, right] * weight_x
+    return top_row * (1 - weight_y) + bottom_row * weight_y</div>
+
+  <p class="sub">rectification</p>
+  <p class="writeup">Before trusting any of this on a mosaic, we can test it on a single photo. If we know an object is a rectangle, we click its four corners (top-left, top-right, bottom-right, bottom-left) and ask H to send them to a real rectangle. The target keeps the top-left corner and the length of the top edge where we clicked them, and gets its height from the object&rsquo;s real aspect ratio.</p>
+  <div class="trio">
+    <figure><img src="media/p4/door_corners.jpg" alt="Photo of a door taken from the side, with its four corners marked"><figcaption>door &middot; 36 &times; 84 in</figcaption></figure>
+    <figure><img src="media/p4/door_nn.jpg" alt="The door photo rectified with nearest-neighbor interpolation"><figcaption>nearest neighbor</figcaption></figure>
+    <figure><img src="media/p4/door_bilinear.jpg" alt="The door photo rectified with bilinear interpolation"><figcaption>bilinear</figcaption></figure>
+  </div>
+  <p class="writeup">The door was shot from its left, so its far edge is shorter and its top and bottom slope towards each other. After the warp its sides are vertical and parallel, and the wall it sits in turns into the flat plane we&rsquo;d see standing right in front of it. The floor gets pulled out to the right since it isn&rsquo;t in the door&rsquo;s plane.</p>
+  <div class="trio">
+    <figure><img src="media/p4/mac_corners.jpg" alt="Photo of a closed laptop on a desk, taken at an angle, with its four corners marked"><figcaption>macbook pro 14&Prime; &middot; 31.26 &times; 22.12 cm</figcaption></figure>
+    <figure><img src="media/p4/mac_nn.jpg" alt="The desk rectified to a top-down view with nearest-neighbor interpolation"><figcaption>nearest neighbor</figcaption></figure>
+    <figure><img src="media/p4/mac_bilinear.jpg" alt="The desk rectified to a top-down view with bilinear interpolation"><figcaption>bilinear</figcaption></figure>
+  </div>
+  <p class="writeup">The laptop is a much harder case: it&rsquo;s a ground-plane rectification, which turns the photo into a top-down view of the desk. The laptop comes out as a clean rectangle with the Apple logo round again, and the desk edge becomes a straight line. Everything that isn&rsquo;t on the desk&rsquo;s plane (the chairs, the other desks, the window) is smeared out towards the top-left, and the further back it was, the more it gets stretched, since a few pixels near the horizon now have to cover a huge area.</p>
+
+  <p class="sub">nearest neighbor vs bilinear</p>
+  <p class="writeup">At full size the two look the same, so here are two crops magnified 4&times;:</p>
+  <div class="pair px">
+    <figure><img src="media/p4/door_nn_zoom.png" alt="Close-up of the sign on the door, nearest neighbor"><figcaption>door sign &middot; nearest neighbor</figcaption></figure>
+    <figure><img src="media/p4/door_bilinear_zoom.png" alt="Close-up of the sign on the door, bilinear"><figcaption>door sign &middot; bilinear</figcaption></figure>
+    <figure><img src="media/p4/mac_nn_zoom.png" alt="Close-up of the Apple logo, nearest neighbor"><figcaption>apple logo &middot; nearest neighbor</figcaption></figure>
+    <figure><img src="media/p4/mac_bilinear_zoom.png" alt="Close-up of the Apple logo, bilinear"><figcaption>apple logo &middot; bilinear</figcaption></figure>
+  </div>
+  <p class="writeup">Nearest neighbor has visible staircases: the border of the sign breaks into steps, the lines of text get torn and shifted, and the edge of the logo is jagged. Each output pixel copies exactly one input pixel, so whenever the warp stretches or rotates the image, neighboring output pixels jump between input pixels. Bilinear blends the four neighbors instead, so edges come out smooth and the text stays in one piece, at the cost of being a little softer.</p>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>warp time</th><th>output size</th><th>nearest neighbor</th><th>bilinear</th></tr>
+      <tr><td>door</td><td>1157 &times; 1465</td><td>0.09 s</td><td>0.19 s</td></tr>
+      <tr><td>macbook</td><td>2564 &times; 2779</td><td>0.46 s</td><td>0.82 s</td></tr>
+    </table>
+  </div>
+  <p class="writeup">Bilinear takes about twice as long, which matches the amount of work: four lookups and a weighted sum instead of one lookup. Both are fully vectorized in numpy, so the difference doesn&rsquo;t really matter here, and bilinear is used for everything else on this page.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">A.4</span><h2>blending into a mosaic</h2></div>
+  <p class="writeup">For each set, the second photo stays unwarped and everything else is warped into its view. Each photo is registered to its neighbor, and the homographies are chained to reach the reference: image 4 goes through image 3 with H<sub>4&rarr;2</sub> = H<sub>3&rarr;2</sub> &middot; H<sub>4&rarr;3</sub>. The canvas is the bounding box of every warped image&rsquo;s corners, and all four images are warped onto that same canvas in one shot.</p>
+  <p class="writeup">If one image simply overwrote the other, any difference in brightness between shots would show up as a hard edge along every seam. Instead every image gets a weight that is 1 at its center and falls linearly to 0 at its edges, warped along with it. The blend is a 2-level pyramid:</p>
+  <div class="writeup"><ul>
+    <li><strong>Low frequencies</strong> (a Gaussian blur with &sigma; = 2) are averaged using the weights, which smooths out brightness differences across the seams.</li>
+    <li><strong>High frequencies</strong> (the image minus its blur) are taken from whichever image has the highest weight at that pixel. Averaging fine detail from two slightly misaligned images would show up as ghosting, so each pixel keeps the sharp detail of a single image.</li>
+  </ul></div>
+  <div class="code">blended_blur = (blurred_layers * weights).sum(axis=0) / weights.sum(axis=0)
+best_image = weights.argmax(axis=0)
+blended_detail = detail_layers[best_image]
+mosaic = blended_blur + blended_detail</div>
+
+  <p class="sub">interior</p>
+  <div class="wide">
+    <figure><img src="media/p4/a_sources.jpg" alt="The four hallway source photos"><figcaption>sources</figcaption></figure>
+  </div>
+  <div class="wide">
+    <figure><img src="media/p4/interior.jpg" alt="Mosaic of the hallway"><figcaption>mosaic &middot; 2237 &times; 2094</figcaption></figure>
+  </div>
+  <p class="writeup">The wood slats run continuously from the doors at the end of the hall all the way to the collaboration space sign, and the seams in the ceiling and floor are invisible. The canvas bends out on both sides because the outer photos are turned furthest from the reference: a flat projection has to stretch them more and more the further they turn. The result also looks a little shaky in places, with edges that wobble slightly instead of lining up perfectly. This can be attributed to inaccurate clicking: a correspondence that is off by a few pixels tilts the homography slightly, and because the outer homographies are chained through the middle ones, those small errors add up toward the edges of the canvas.</p>
+
+  <p class="sub">building</p>
+  <div class="wide">
+    <figure><img src="media/p4/b_sources.jpg" alt="The four building source photos"><figcaption>sources</figcaption></figure>
+  </div>
+  <div class="wide">
+    <figure><img src="media/p4/building.jpg" alt="Mosaic of the glass building and courtyard"><figcaption>mosaic &middot; 1724 &times; 1682</figcaption></figure>
+  </div>
+  <p class="writeup">The window grid of the glass building lines up across all four photos, and so do the red roof, the trees and the paths in the courtyard. The one flaw is a small step in the glass building&rsquo;s roofline about a third of the way across, where my points weren&rsquo;t quite precise enough for a thin, high-contrast edge.</p>
+
+  <p class="sub">classroom</p>
+  <div class="wide">
+    <figure><img src="media/p4/c_sources.jpg" alt="The four classroom source photos"><figcaption>sources</figcaption></figure>
+  </div>
+  <div class="wide">
+    <figure><img src="media/p4/classroom.jpg" alt="Mosaic of the classroom"><figcaption>mosaic &middot; 1612 &times; 1712</figcaption></figure>
+  </div>
+  <p class="writeup">The windows, the TV, the ceiling grid and the long light fixtures all line up. This blending was supposed to be the most challenging, since the desk with the bag on it is right in front of the camera, so any side-ways movement would be very visible. Even so, the front desk came out without visible ghosting as the camera was more stable.</p>
+</section>
+
+<footer class="doc-foot">
+  <a href="index.html">&larr; index</a>
+  <span>cs 180 project by daniel shin</span>
+</footer>
+
+</body>
+</html>

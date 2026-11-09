@@ -17,7 +17,7 @@
 </header>
 
 <h1 class="doc-title">image warping<br>and mosaicing</h1>
-<p class="doc-meta">homographies from clicked points, inverse warping, and three panoramas &middot; fall 2026</p>
+<p class="doc-meta">homographies from clicked points, then from automatically matched features &middot; inverse warping and three panoramas &middot; fall 2026</p>
 
 <!-- ============================================================ -->
 <h2 class="part">part a &middot; image warping and mosaicing</h2>
@@ -234,6 +234,154 @@ mosaic = blended_blur + blended_detail</div>
     <figure><img src="media/p4/classroom.jpg" alt="Mosaic of the classroom"><figcaption>mosaic &middot; 1612 &times; 1712</figcaption></figure>
   </div>
   <p class="writeup">The windows, the TV, the ceiling grid and the long light fixtures all line up. This blending was supposed to be the most challenging, since the desk with the bag on it is right in front of the camera, so any side-ways movement would be very visible. Even so, the front desk came out without visible ghosting as the camera was more stable.</p>
+</section>
+
+<!-- ============================================================ -->
+<h2 class="part">part b &middot; feature matching for autostitching</h2>
+
+<section>
+  <p class="writeup">Do you really want to click correspondences all day? It's slow and not very precise. In part B, we explore ways to find them automatically, following &ldquo;Multi-Image Matching using Multi-Scale Oriented Patches&rdquo; by Brown et al. with a few simplifications (single scale, no rotation invariance). The photos are the same three sets from part A, and the warping and blending code is unchanged: only the source of the homographies is different.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">B.1</span><h2>harris corners and anms</h2></div>
+  <p class="writeup">We start with the Harris corner detector from the course&rsquo;s <code>harris.py</code>, run at a single scale on the grayscale image. Corners within 20 px of the border are thrown out so that every corner has room for a descriptor later. On the middle building photo (1200 &times; 900) this returns 24,059 corners, which is far too many to match. They also bunch up wherever the texture is busiest, like the window frames.</p>
+  <p class="writeup">Adaptive non-maximal suppression (ANMS) picks 500 corners that are both strong and evenly spread out. Each corner gets a suppression radius: the distance to the nearest corner that is clearly stronger than it (f<sub>i</sub> &lt; 0.9 &middot; f<sub>j</sub>). A strong corner only competes with even stronger ones and gets a large radius. A weak corner sitting next to a strong one gets a tiny radius. Keeping the 500 largest radii gives the strongest corner in each neighborhood.</p>
+  <div class="code">def anms(points, strengths, count=500):
+    order = np.argsort(-strengths)
+    points, strengths = points[order], strengths[order]
+    r = np.full(len(points), np.inf)
+    for i in range(1, len(points)):
+        stronger = strengths[:i] * 0.9 > strengths[i]
+        if stronger.any():
+            r[i] = ((points[:i][stronger] - points[i]) ** 2).sum(1).min()
+    return points[np.argsort(-r)[:count]]</div>
+  <p class="writeup">Sorting by strength first means that only the corners earlier in the list can be stronger, so each corner only has to be compared against those.</p>
+  <div class="pair">
+    <figure><img src="media/p4/b_harris.jpg" alt="The middle building photo covered in about 24,000 red Harris corners"><figcaption>all harris corners &middot; 24,059</figcaption></figure>
+    <figure><img src="media/p4/b_anms.jpg" alt="The middle building photo with 500 evenly spread red corners"><figcaption>after anms &middot; 500</figcaption></figure>
+  </div>
+  <p class="writeup">Without ANMS the corners essentially cover the entire image, even the sky. With ANMS they are spaced out over the building, the dome and the trees (the sky still gets its fair share with weak corners).</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">B.2</span><h2>feature descriptors</h2></div>
+  <p class="writeup">Each corner is described by an axis-aligned 8 &times; 8 patch taken from the 40 &times; 40 window around it. The image is blurred with a Gaussian (&sigma; = 2) and then sampled every 5 pixels. Without the blur, sampling every 5th pixel would alias, and moving the corner by a single pixel could change the descriptor completely. In contrast, the blurred descriptor changes smoothly instead, tolerating small localization errors.</p>
+  <p class="writeup">Each patch is then bias/gain normalized. This way a photo a bit brighter or more contrastive than its neighbor still produces the same descriptors.</p>
+  <div class="code">def descriptors(blurred, points):
+    patches = np.array([blurred[y - 18:y + 20:5, x - 18:x + 20:5].ravel() for x, y in points])
+    return (patches - patches.mean(1, keepdims=True)) / patches.std(1, keepdims=True)</div>
+  <div class="wide">
+    <figure><img src="media/p4/b_descriptors.jpg" alt="Six blurred 40 by 40 windows above their normalized 8 by 8 descriptors"><figcaption>top: blurred 40 &times; 40 windows &middot; bottom: normalized 8 &times; 8 descriptors &middot; middle building photo</figcaption></figure>
+  </div>
+  <p class="writeup">The 8 &times; 8 versions are coarse, but each one still shows the main structure of its window. The normalization stretches every patch to the same contrast range, so a dim window and a bright one end up equally strong.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">B.3</span><h2>feature matching</h2></div>
+  <p class="writeup">For every descriptor in one image, we find its nearest and second-nearest descriptor in the neighboring image by sum of squared differences, using <code>dist2</code> from <code>harris.py</code>. Thresholding the nearest distance alone doesn&rsquo;t work well, since some features are just generally more distinctive than others. Lowe&rsquo;s trick is to compare the two: a correct match should be much closer than anything else, while a wrong one is usually about as close to its first neighbor as to its second. Figure 6b in the paper shows correct matches concentrated at low ratios and incorrect ones close to 1, and we keep a match when e<sub>1-NN</sub> / e<sub>2-NN</sub> &lt; 0.5.</p>
+  <div class="code">def match(features1, features2, ratio=0.5):
+    distances = dist2(features1, features2)
+    first, second = np.sort(distances, 1)[:, :2].T
+    good = first / second &lt; ratio
+    return np.flatnonzero(good), distances.argmin(1)[good]</div>
+  <p class="writeup">Out of 500 features per image, between 116 and 244 survive the ratio test for each pair. Here are all of them for the building pairs:</p>
+  <div class="wide">
+    <figure><img src="media/p4/building_21_matches.jpg" alt="Lines connecting matched features between building photos 3 and 2"><figcaption>building &middot; 3 &rarr; 2 &middot; 170 matches</figcaption></figure>
+  </div>
+  <div class="stack">
+    <figure><img src="media/p4/building_01_matches.jpg" alt="Lines connecting matched features between building photos 1 and 2"><figcaption>building &middot; 1 &rarr; 2 &middot; 192 matches</figcaption></figure>
+    <figure><img src="media/p4/building_32_matches.jpg" alt="Lines connecting matched features between building photos 4 and 3"><figcaption>building &middot; 4 &rarr; 3 &middot; 244 matches</figcaption></figure>
+  </div>
+  <p class="writeup">Most lines run in parallel, which is what a correct match looks like here. However, there are still some non-parallel lines that are wrong matches.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head"><span class="num">B.4</span><h2>ransac and automatic mosaics</h2></div>
+  <p class="writeup">Since we treat every match equal, a handful of wrong matches would ruin a least-squares fit. For this we use 4-point RANSAC: pick 4 random matches, solve the exact H through them with the same <code>computeH</code> as in part A, and count how many of all the matches land within 2 px of where that H predicts. Repeat this 2000 times. A sample with a wrong match in it will only agree with a few points, while a clean sample agrees with all of the correct ones. The largest set of agreeing matches is kept, and H is refit on all of them with least squares.</p>
+  <div class="code">def ransac(points1, points2, iterations=2000, threshold=2):
+    rng = np.random.default_rng(0)
+    best = np.zeros(len(points1), bool)
+    for _ in range(iterations):
+        sample = rng.choice(len(points1), 4, replace=False)
+        H = computeH(points1[sample], points2[sample])
+        inliers = np.linalg.norm(apply_homography(H, points1) - points2, axis=1) &lt; threshold
+        if inliers.sum() &gt; best.sum():
+            best = inliers
+    return computeH(points1[best], points2[best]), best</div>
+  <div class="wide">
+    <figure><img src="media/p4/building_21_inliers.jpg" alt="Only the RANSAC inlier matches between building photos 3 and 2, all running in parallel"><figcaption>building &middot; 3 &rarr; 2 &middot; 108 of 170 matches are inliers</figcaption></figure>
+  </div>
+  <p class="writeup">After RANSAC every line runs in parallel. The table lists every pair. Between 52% and 71% of the matches survive, and the inliers land about 1 px from where H puts them on average, compared to 2&ndash;6 px for the clicked points in part A.</p>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <tr><th>mosaic</th><th>pair</th><th>matches</th><th>inliers</th><th>mean error (px)</th><th>H</th></tr>
+      <tr><td>interior</td><td>1 &rarr; 2</td><td>149</td><td>80</td><td>1.04</td><td class="mat">[[ 1.2517  0.0058 -261.5045]
+ [ 0.1665  1.129   -76.3927]
+ [ 0.0003 -0.        1.    ]]</td></tr>
+      <tr><td>interior</td><td>3 &rarr; 2</td><td>116</td><td>66</td><td>0.97</td><td class="mat">[[ 0.759  -0.0086  236.2468]
+ [-0.1541  0.9052   57.7229]
+ [-0.0003 -0.        1.    ]]</td></tr>
+      <tr><td>interior</td><td>4 &rarr; 3</td><td>122</td><td>87</td><td>0.97</td><td class="mat">[[ 0.8204  0.0176  169.7955]
+ [-0.1351  0.9352   46.4686]
+ [-0.0002  0.        1.    ]]</td></tr>
+      <tr><td>building</td><td>1 &rarr; 2</td><td>192</td><td>135</td><td>1.00</td><td class="mat">[[ 1.2408  0.004  -228.2735]
+ [ 0.1504  1.1505  -94.7091]
+ [ 0.0003  0.        1.    ]]</td></tr>
+      <tr><td>building</td><td>3 &rarr; 2</td><td>170</td><td>108</td><td>1.05</td><td class="mat">[[ 0.7638 -0.0243  225.6255]
+ [-0.1293  0.9012   51.528 ]
+ [-0.0003 -0.        1.    ]]</td></tr>
+      <tr><td>building</td><td>4 &rarr; 3</td><td>244</td><td>154</td><td>1.07</td><td class="mat">[[ 0.8163 -0.0171  181.746 ]
+ [-0.1054  0.9198   47.6939]
+ [-0.0002 -0.        1.    ]]</td></tr>
+      <tr><td>classroom</td><td>1 &rarr; 2</td><td>242</td><td>134</td><td>0.92</td><td class="mat">[[ 1.1026  0.0103 -113.2433]
+ [ 0.0552  1.0543  -25.7331]
+ [ 0.0001 -0.        1.    ]]</td></tr>
+      <tr><td>classroom</td><td>3 &rarr; 2</td><td>214</td><td>111</td><td>1.14</td><td class="mat">[[ 0.7985 -0.007   193.6411]
+ [-0.1277  0.9115   55.8974]
+ [-0.0002 -0.        1.    ]]</td></tr>
+      <tr><td>classroom</td><td>4 &rarr; 3</td><td>215</td><td>133</td><td>1.08</td><td class="mat">[[ 0.8283 -0.0092  175.8784]
+ [-0.104   0.9308   33.7926]
+ [-0.0002  0.        1.    ]]</td></tr>
+    </table>
+  </div>
+  <div class="stack">
+    <figure><img src="media/p4/building_01_inliers.jpg" alt="RANSAC inliers between building photos 1 and 2"><figcaption>building &middot; 1 &rarr; 2 &middot; 135 inliers</figcaption></figure>
+    <figure><img src="media/p4/building_32_inliers.jpg" alt="RANSAC inliers between building photos 4 and 3"><figcaption>building &middot; 4 &rarr; 3 &middot; 154 inliers</figcaption></figure>
+    <figure><img src="media/p4/interior_01_inliers.jpg" alt="RANSAC inliers between hallway photos 1 and 2"><figcaption>interior &middot; 1 &rarr; 2 &middot; 80 inliers</figcaption></figure>
+    <figure><img src="media/p4/interior_21_inliers.jpg" alt="RANSAC inliers between hallway photos 3 and 2"><figcaption>interior &middot; 3 &rarr; 2 &middot; 66 inliers</figcaption></figure>
+    <figure><img src="media/p4/interior_32_inliers.jpg" alt="RANSAC inliers between hallway photos 4 and 3"><figcaption>interior &middot; 4 &rarr; 3 &middot; 87 inliers</figcaption></figure>
+    <figure><img src="media/p4/classroom_01_inliers.jpg" alt="RANSAC inliers between classroom photos 1 and 2"><figcaption>classroom &middot; 1 &rarr; 2 &middot; 134 inliers</figcaption></figure>
+    <figure><img src="media/p4/classroom_21_inliers.jpg" alt="RANSAC inliers between classroom photos 3 and 2"><figcaption>classroom &middot; 3 &rarr; 2 &middot; 111 inliers</figcaption></figure>
+    <figure><img src="media/p4/classroom_32_inliers.jpg" alt="RANSAC inliers between classroom photos 4 and 3"><figcaption>classroom &middot; 4 &rarr; 3 &middot; 133 inliers</figcaption></figure>
+  </div>
+
+  <p class="sub">manual vs automatic</p>
+  <p class="writeup">The automatic homographies go through the exact same chaining, warping and 2-level blending as in part A. Manual results are on the left, automatic ones on the right.</p>
+  <div class="pair">
+    <figure><img src="media/p4/interior.jpg" alt="Hallway mosaic stitched from clicked points"><figcaption>interior &middot; manual &middot; 2237 &times; 2094</figcaption></figure>
+    <figure><img src="media/p4/interior_auto.jpg" alt="Hallway mosaic stitched from automatic matches"><figcaption>interior &middot; automatic &middot; 1782 &times; 1728</figcaption></figure>
+  </div>
+  <p class="writeup">The automatic result is so much better. The manual version is noticeably convoluted. The automatic one is more compact, and the wood slats and the ceiling line up across the seams and are nearly perpendicular.</p>
+  <div class="pair">
+    <figure><img src="media/p4/building.jpg" alt="Building mosaic stitched from clicked points"><figcaption>building &middot; manual &middot; 1724 &times; 1682</figcaption></figure>
+    <figure><img src="media/p4/building_auto.jpg" alt="Building mosaic stitched from automatic matches"><figcaption>building &middot; automatic &middot; 1733 &times; 1704</figcaption></figure>
+  </div>
+  <p class="writeup">At full size the two building mosaics look almost the same. The difference is in the roofline step mentioned in part A:</p>
+  <div class="pair">
+    <figure><img src="media/p4/b_roof_manual.jpg" alt="Close-up of the glass building's roofline in the manual mosaic, with a ghosted step"><figcaption>roofline &middot; manual</figcaption></figure>
+    <figure><img src="media/p4/b_roof_auto.jpg" alt="Close-up of the glass building's roofline in the automatic mosaic, a single clean edge"><figcaption>roofline &middot; automatic</figcaption></figure>
+  </div>
+  <p class="writeup">In the manual mosaic the roof edge doubles up into a faint ghost above the real one. In the automatic mosaic it is a single clean line.</p>
+  <div class="pair">
+    <figure><img src="media/p4/classroom.jpg" alt="Classroom mosaic stitched from clicked points"><figcaption>classroom &middot; manual &middot; 1612 &times; 1712</figcaption></figure>
+    <figure><img src="media/p4/classroom_auto.jpg" alt="Classroom mosaic stitched from automatic matches"><figcaption>classroom &middot; automatic &middot; 1545 &times; 1639</figcaption></figure>
+  </div>
+  <p class="writeup">The classroom was already clean by hand so the results of the automatic version is similar to the manual one. Overall, the automatic pipeline is at least as good as careful clicking on every set and noticeably better on the interior. As as added bonus, it also takes no clicking at all.</p>
 </section>
 
 <footer class="doc-foot">
